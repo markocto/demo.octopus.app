@@ -37,7 +37,7 @@ variable "Octopus.Azure.Account" {
 }
 
 variable "Octopus.JiraServiceManagement.ChangeRequest.Number" {
-    value "ITSM-" {
+    value "" {
         environment = ["production"]
 
         prompt {
