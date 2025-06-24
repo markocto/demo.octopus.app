@@ -1,0 +1,132 @@
+name = "Switch to AWS"
+default_guided_failure_mode = "EnvironmentDefault"
+description = ""
+environment_scope = "Specified"
+environments = ["development"]
+
+connectivity_policy {
+    allow_deployments_to_no_targets = true
+}
+
+run_retention_policy {
+    quantity_to_keep = 3
+}
+
+process {
+    step "update-process" {
+        name = "Update process"
+
+        action {
+            action_type = "Octopus.Script"
+            properties = {
+                Octopus.Action.Script.ScriptBody = <<-EOT
+                    $octopusURL = "https://demo.octopus.app"
+                    $octopusAPIKey = $OctopusParameters["Global.Octopus.ApiKey"]
+                    
+                    ##PROCESS
+                    $header = @{ "X-Octopus-ApiKey" = $octopusAPIKey }
+                    
+                    $spaceId = $OctopusParameters["Octopus.Space.Id"]
+                    $projectId = $OctopusParameters["Octopus.Project.Id"]
+                    
+                    $space = Invoke-RestMethod -Method Get -Uri "$octopusURL/api/spaces/$spaceId" -Headers $header
+                    $project = Invoke-RestMethod -Method Get -Uri "$octopusURL/api/$spaceId/projects/$projectId" -Headers $header
+                    
+                    if ($project.IsVersionControlled) {
+                    	$processUrl = "projects/$projectId/refs%2fheads%2fmain/deploymentprocesses"
+                    }
+                    else {
+                    	$processUrl = "projects/$projectId/deploymentprocesses"
+                    }
+                    
+                    $process = Invoke-RestMethod -Method Get -Uri "$octopusURL/api/$spaceId/$processUrl" -Headers $header
+                    
+                    foreach ($step in $process.Steps) {
+                    	if ($step.Name.Contains("Azure discovery")) {
+                        	$step.Actions[0].IsDisabled = $true
+                        }
+                        elseif ($step.Name.Contains("AWS discovery")) {
+                        	$step.Actions[0].IsDisabled = $false
+                        }
+                        elseif ($step.Name.Contains("Deploy Web App")) {
+                        	$step.Actions[0].WorkerPoolVariable = "OctoPetShop.WorkerPool.AWS"
+                        }
+                    }
+                    
+                    $process | Add-Member -NotePropertyName ChangeDescription -NotePropertyValue "Updating process to use AWS discovery"
+                    
+                    $body = $process | ConvertTo-Json -Depth 10
+                    
+                    $process = Invoke-RestMethod -Method Put -Uri "$octopusURL/api/$spaceId/$processUrl" -Body $body -Headers $header
+                    EOT
+                Octopus.Action.Script.ScriptSource = "Inline"
+                Octopus.Action.Script.Syntax = "PowerShell"
+            }
+            worker_pool_variable = "OctoPetShop.WorkerPool.Azure"
+        }
+    }
+
+    step "disable-aks-targets" {
+        name = "Disable AKS targets"
+
+        action {
+            action_type = "Octopus.Script"
+            properties = {
+                Octopus.Action.Script.ScriptBody = <<-EOT
+                    $octopusURL = "https://demo.octopus.app"
+                    $octopusAPIKey = $OctopusParameters["Global.Octopus.ApiKey"]
+                    
+                    ##PROCESS
+                    $header = @{ "X-Octopus-ApiKey" = $octopusAPIKey }
+                    
+                    $spaceId = $OctopusParameters["Octopus.Space.Id"]
+                    $projectId = $OctopusParameters["Octopus.Project.Id"]
+                    
+                    $space = Invoke-RestMethod -Method Get -Uri "$octopusURL/api/spaces/$spaceId" -Headers $header
+                    $targets = (Invoke-RestMethod -Method Get -Uri "$octopusURL/api/$spaceId/machines/all" -Headers $header) | Where-Object { $_.Name.StartsWith("aks") }
+                    
+                    foreach ($target in $targets) {
+                    	Write-Host "Disabling target $($target.Name)"
+                    	$target.IsDisabled = $true
+                        $target = Invoke-RestMethod -Method Put -Uri "$octopusURL/api/$spaceId/machines/$($target.Id)" -Body ($target | ConvertTo-Json -Depth 10) -Headers $header
+                    }
+                    EOT
+                Octopus.Action.Script.ScriptSource = "Inline"
+                Octopus.Action.Script.Syntax = "PowerShell"
+            }
+            worker_pool_variable = "OctoPetShop.WorkerPool.Azure"
+        }
+    }
+
+    step "disable-eks-targets" {
+        name = "Enable EKS targets"
+
+        action "enable-eks-targets" {
+            action_type = "Octopus.Script"
+            properties = {
+                Octopus.Action.Script.ScriptBody = <<-EOT
+                    $octopusURL = "https://demo.octopus.app"
+                    $octopusAPIKey = $OctopusParameters["Global.Octopus.ApiKey"]
+                    
+                    ##PROCESS
+                    $header = @{ "X-Octopus-ApiKey" = $octopusAPIKey }
+                    
+                    $spaceId = $OctopusParameters["Octopus.Space.Id"]
+                    $projectId = $OctopusParameters["Octopus.Project.Id"]
+                    
+                    $space = Invoke-RestMethod -Method Get -Uri "$octopusURL/api/spaces/$spaceId" -Headers $header
+                    $targets = (Invoke-RestMethod -Method Get -Uri "$octopusURL/api/$spaceId/machines/all" -Headers $header) | Where-Object { $_.Name.StartsWith("arn:aws:eks") }
+                    
+                    foreach ($target in $targets) {
+                    	Write-Host "Enabling target $($target.Name)"
+                    	$target.IsDisabled = $false
+                        $target = Invoke-RestMethod -Method Put -Uri "$octopusURL/api/$spaceId/machines/$($target.Id)" -Body ($target | ConvertTo-Json -Depth 10) -Headers $header
+                    }
+                    EOT
+                Octopus.Action.Script.ScriptSource = "Inline"
+                Octopus.Action.Script.Syntax = "PowerShell"
+            }
+            worker_pool_variable = "OctoPetShop.WorkerPool.Azure"
+        }
+    }
+}
