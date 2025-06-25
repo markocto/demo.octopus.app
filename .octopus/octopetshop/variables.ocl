@@ -151,6 +151,8 @@ variable "Octopus.Azure.Account" {
 
 variable "Octopus.ServiceNow.ChangeRequest.Number" {
     value {
+        environment = ["production"]
+
         prompt {
             description = ""
             display_settings = {
